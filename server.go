@@ -2,18 +2,22 @@ package main
 
 import (
 	_ "fmt"
-	"sync"
-	"net"
 	"log"
+	"net"
+	"sync"
 )
 
+type ClientMap map[net.Conn] Client
+
 type Server struct {
-	mu sync.Mutex
+	mu       sync.Mutex
 	listener net.Listener
-	kill chan interface{}
-	closed bool
-	wait sync.WaitGroup
-	stop sync.Once
+	kill     chan interface{}
+	closed   bool
+	serverWg sync.WaitGroup
+	wait     sync.WaitGroup
+	stop     sync.Once
+	clients  ClientMap
 }
 
 func New(laddr string) *Server {
@@ -49,11 +53,25 @@ func (this *Server) Shutdown() {
 	}
 	this.listener.Close()
 	this.closed = true
+	
+	for _, c := range this.clients {
+		c.client.Close()
+		c.remote.Close()
+	}
+	this.serverWg.Wait()
+	
 	this.wait.Done()
 }
 
 func (this *Server) Wait() {
 	this.wait.Wait()
+}
+
+func (this *Server) boardcast(msg int) {
+	for _, c := range this.clients {
+		c.client.Close()
+		c.remote.Close()
+	}
 }
 
 func (this *Server) listen() {
@@ -64,47 +82,10 @@ func (this *Server) listen() {
 			continue
 		}
 		log.Println("Accept: ", client.RemoteAddr())
-		go this.handleClient(client)
+		this.serverWg.Add(1)
+		cli := NewClient(client, &this.serverWg)
+		go cli.handle()
 	}
 }
 
-func (this *Server) handleClient(client net.Conn) {
-	remote, err := net.Dial("tcp", "116.31.122.34:80")
-	if err != nil {
-		log.Println("Can not connect: ", err)
-		client.Close()
-		return
-	}
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go this.pipe(wg, client, remote)
-	go this.pipe(wg, remote, client)
-	wg.Wait()
-	client.Close()
-	remote.Close()
-}
 
-func (this *Server) pipe (wg sync.WaitGroup, r net.Conn, w net.Conn) {
-	defer wg.Done()
-	buf := make([]byte,1024)
-	for {
-		total, err := r.Read(buf)
-		if err != nil {
-			log.Println("Read error: ", err, r.RemoteAddr())
-			r.Close()
-			w.Close()
-			return
-		}
-		var writed int
-		for total > writed {
-			n2, err := w.Write(buf[writed:total])
-			if err != nil {
-				log.Println("Write error: ", err, w.RemoteAddr())
-				w.Close()
-				r.Close()
-				return
-			}
-			writed += n2
-		}
-	}
-}
