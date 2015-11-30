@@ -5,5 +5,9 @@ import (
 )
 
 func main() {
-	fmt.Println("hello world")
+	server := New(":9999")
+	server.Start()
+	fmt.Println("start")
+	server.Wait()
+	fmt.Println("finish")
 }
