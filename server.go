@@ -4,55 +4,52 @@ import (
 	_ "fmt"
 	"log"
 	"net"
-	"sync"
 	"runtime"
+	"sync"
 )
 
-type ClientMap map[net.Conn] *Client
+type ClientMap map[net.Conn]*Client
 
 type Server struct {
-	mu               sync.Mutex
-	listener         net.Listener
-	killChan         chan interface{}
-	closedClientChan chan net.Conn
-	closed           bool
-	serverWg         sync.WaitGroup
-	wait             sync.WaitGroup
-	stop             sync.Once
-	clients          ClientMap
+	mu       sync.Mutex
+	conf     *Config
+	listener net.Listener
+	closed   bool
+	serverWg sync.WaitGroup
+	stateWg  sync.WaitGroup
+	clients  ClientMap
 }
 
-func New(laddr string) *Server {
+func NewServer(laddr string, conf *Config) *Server {
 	l, err := net.Listen("tcp", laddr)
 	if err != nil {
 		log.Fatalf("Can not listen %s: %s", laddr, err)
 		return nil
 	}
 	s := &Server{}
+	s.conf = conf
 	s.listener = l
 	s.closed = true
 	s.clients = make(ClientMap)
-	s.killChan = make(chan interface{})
-	s.closedClientChan = make(chan net.Conn)
 	return s
 }
 
 func (this *Server) Start() {
 	this.mu.Lock()
-	if ! this.closed {
+	if !this.closed {
 		log.Println("Server is started!")
 		return
 	}
 	this.closed = false
 	this.mu.Unlock()
-	
-	this.wait.Add(1)
+
+	this.stateWg.Add(1)
 	go this.listen()
 }
 
 func (this *Server) Shutdown() {
 	log.Println("call Shutdown")
-	
+
 	this.mu.Lock()
 	if this.closed {
 		log.Println("Server is closed!")
@@ -60,7 +57,7 @@ func (this *Server) Shutdown() {
 	}
 	this.closed = true
 	this.mu.Unlock()
-	
+
 	log.Println("Close listener")
 	this.listener.Close()
 	runtime.Gosched()
@@ -72,11 +69,11 @@ func (this *Server) Shutdown() {
 	}
 	this.serverWg.Wait()
 
-	this.wait.Done()
+	this.stateWg.Done()
 }
 
 func (this *Server) Wait() {
-	this.wait.Wait()
+	this.stateWg.Wait()
 }
 
 func (this *Server) boardcast(msg int) {

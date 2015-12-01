@@ -7,11 +7,11 @@ import (
 )
 
 type Client struct {
-	client           net.Conn
-	remote           net.Conn
-	closed           bool
-	serverWg         *sync.WaitGroup
-	clientWg         sync.WaitGroup
+	client   net.Conn
+	remote   net.Conn
+	closed   bool
+	serverWg *sync.WaitGroup
+	clientWg sync.WaitGroup
 }
 
 func NewClient(client net.Conn, serverWg *sync.WaitGroup) *Client {
