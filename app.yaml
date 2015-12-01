@@ -1,10 +1,15 @@
-server:
-  ip: 127.0.0.1
-  port: 5588
-watcher:
+zk:
   zkhost:
     - 127.0.0.1:12191
     - 127.0.0.1:12192
     - 127.0.0.1:12193
   zktimeout: 1000
-
+zkpath:
+  root: /GoHAProxy
+  master: /master
+  server: /server
+  judge: /judge
+  proxy: /proxy
+server:
+  ip: 127.0.0.1
+  port: 5588
