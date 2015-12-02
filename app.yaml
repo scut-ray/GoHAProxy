@@ -9,7 +9,8 @@ zkpath:
   master: /master
   server: /server
   judge: /judge
-  proxy: /proxy
+  fail: /fail
+  minfail: /minfail
 server:
   ip: 127.0.0.1
   port: 5588

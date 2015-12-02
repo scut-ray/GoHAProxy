@@ -12,11 +12,12 @@ type Config struct {
 		ZkTimeout uint
 	}
 	ZkPath struct {
-		Root   string
-		Master string
-		Server string
-		Judge  string
-		Proxy  string
+		Root    string
+		Master  string
+		Server  string
+		Judge   string
+		Fail    string
+		MinFail string
 	}
 	Server struct {
 		Ip   string
