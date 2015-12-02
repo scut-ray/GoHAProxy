@@ -3,11 +3,11 @@ package main
 import (
 	"github.com/samuel/go-zookeeper/zk"
 	"log"
+	"net"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
-	"net"
-	"strconv"
 )
 
 type zkBindData struct {
@@ -102,10 +102,11 @@ func (this *zkBindData) bindList(path string, data *[]string) {
 }
 
 type Watcher struct {
-	conf   *Config
-	zkConn *zk.Conn
+	conf     *Config
+	zkConn   *zk.Conn
 	bindData *zkBindData
 	quiting  chan interface{}
+	judgeId  string
 }
 
 func NewWatcher(conf *Config) *Watcher {
@@ -136,15 +137,15 @@ func (this *Watcher) watchMaster() {
 			log.Println("Can not convert minFailCount: ", minFailCount)
 			minFailCount = 100
 		}
-		if (m == "") {
+		if m == "" {
 			this.fightForJudge()
 			failCount = 0
 			continue
 		}
 		conn, err := net.DialTimeout("tcp", m, time.Second)
 		if err != nil {
-			failCount ++
-			if failCount >= minFailCount {
+			failCount++
+			if failCount >= 5 {
 				this.fightForJudge()
 				failCount = 0
 				continue
@@ -153,16 +154,23 @@ func (this *Watcher) watchMaster() {
 			conn.Close()
 		}
 		select {
-			case <- this.quiting:
-				return
-			case <- time.After(2 * time.Second):
-				//
+		case <-this.quiting:
+			return
+		case <-time.After(2 * time.Second):
+			//
 		}
 	}
 }
 
 func (this *Watcher) fightForJudge() {
-	
+	minFailCount, cerr := strconv.Atoi(this.bindData.minFailCount)
+	if cerr != nil {
+		log.Println("Can not convert minFailCount: ", minFailCount)
+		minFailCount = 100
+	}
+	if len(this.bindData.failList) < minFailCount {
+		return
+	}
 }
 
 func (this *Watcher) Shutdown() {
