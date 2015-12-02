@@ -51,6 +51,7 @@ func (this *zkBindData) bindKey(path string, data *string) {
 	for {
 		d, _, evt, err := this.conn.GetW(path)
 		if err != nil {
+			log.Printf("Get %s zk data error: %s\n", path, err)
 			select {
 			case <-this.quiting:
 				// 如果已经关闭就退出循环
@@ -58,7 +59,6 @@ func (this *zkBindData) bindKey(path string, data *string) {
 			case <-time.After(3 * time.Second):
 				// 否则等待3秒重试
 			}
-			log.Printf("Get %s zk data error: %s\n", path, err)
 			continue
 		}
 		*data = string(d)
@@ -79,6 +79,7 @@ func (this *zkBindData) bindList(path string, data *[]string) {
 	for {
 		d, _, evt, err := this.conn.ChildrenW(path)
 		if err != nil {
+			log.Printf("List %s zk data error: %s\n", path, err)
 			select {
 			case <-this.quiting:
 				// 如果已经关闭就退出循环
@@ -86,7 +87,6 @@ func (this *zkBindData) bindList(path string, data *[]string) {
 			case <-time.After(3 * time.Second):
 				// 否则等待3秒重试
 			}
-			log.Printf("List %s zk data error: %s\n", path, err)
 			continue
 		}
 		*data = []string(d)
@@ -171,6 +171,42 @@ func (this *Watcher) fightForJudge() {
 	if len(this.bindData.failList) < minFailCount {
 		return
 	}
+	path := this.conf.ZkPath.Root + this.conf.ZkPath.Judge
+	_, err := this.zkConn.Create(path, []byte("me"), zk.FlagEphemeral, nil)
+	if err == zk.ErrNodeExists {
+		//已经存在了
+		return
+	}
+	defer this.zkConn.Delete(path, -1)
+	
+	mpath := this.conf.ZkPath.Root + this.conf.ZkPath.Master
+	this.zkConn.Set(mpath, []byte(""), 0)
+	
+	select {
+	case <-this.quiting:
+		return
+	case <-time.After(2 * time.Second):
+		//
+	}
+	
+	master := this.bindData.master
+	for _, srv := range this.bindData.serverList {
+		if srv == master {
+			continue
+		}
+		conn, err := net.DialTimeout("tcp", srv, time.Second)
+		if err != nil {
+			log.Println("Judge, CANNOT connect server ", srv)
+			continue
+		} else {
+			conn.Close()
+			log.Println("Judge, Set master ", srv)
+			this.zkConn.Set(mpath, []byte(srv), 0)
+			return
+		}
+	}
+	
+	log.Println("Judge, Not found valid master")
 }
 
 func (this *Watcher) Shutdown() {
