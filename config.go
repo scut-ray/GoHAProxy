@@ -7,13 +7,20 @@ import (
 )
 
 type Config struct {
+	Zk struct {
+		ZkHost    []string
+		ZkTimeout uint
+	}
+	ZkPath struct {
+		Root   string
+		Master string
+		Server string
+		Judge  string
+		Proxy  string
+	}
 	Server struct {
 		Ip   string
 		Port uint16
-	}
-	Watcher struct {
-		ZkHost    []string
-		ZkTimeout uint
 	}
 }
 

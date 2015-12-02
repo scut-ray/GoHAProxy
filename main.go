@@ -15,7 +15,7 @@ func main() {
 		os.Exit(1)
 		return
 	}
-	
+
 	quit := make(chan os.Signal)
 	signal.Notify(quit, os.Kill, os.Interrupt)
 	bindAddr := fmt.Sprintf("%s:%d", conf.Server.Ip, conf.Server.Port)

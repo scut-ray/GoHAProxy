@@ -5,7 +5,8 @@ import (
 )
 
 func TestWatcher(t *testing.T) {
-	w := NewWatcher()
+	conf, _ := NewConfig("app.yaml")
+	w := NewWatcher(conf)
 	if w == nil {
 		t.Fatal("Can not new watcher")
 		return
