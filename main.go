@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	_ "syscall"
@@ -11,7 +12,7 @@ func main() {
 	yamlFile := "app.yaml"
 	conf, err := NewConfig(yamlFile)
 	if err != nil {
-		fmt.Printf("Can not load config file %s: %s\n", yamlFile, err)
+		log.Printf("Can not load config file %s: %s\n", yamlFile, err)
 		os.Exit(1)
 		return
 	}
@@ -19,15 +20,29 @@ func main() {
 	quit := make(chan os.Signal)
 	signal.Notify(quit, os.Kill, os.Interrupt)
 	bindAddr := fmt.Sprintf("%s:%d", conf.Server.Ip, conf.Server.Port)
-	fmt.Println("bind addr ", bindAddr)
+	log.Println("bind addr ", bindAddr)
 	server := NewServer(bindAddr, conf)
+	if server == nil {
+		log.Fatal("Can NOT create server!")
+		os.Exit(1)
+		return
+	}
+	watcher := NewWatcher(conf)
+	if watcher == nil {
+		log.Fatal("Can NOT create watcher!")
+		os.Exit(1)
+		return
+	}
 	server.Start()
-	fmt.Println("start")
+	watcher.Start()
+	log.Println("start")
 	go func() {
 		<-quit
-		fmt.Println("Recv quit signal")
+		log.Println("Recv quit signal")
 		server.Shutdown()
+		watcher.Shutdown()
 	}()
 	server.Wait()
-	fmt.Println("finish")
+	watcher.Wait()
+	log.Println("finish")
 }
