@@ -1,13 +1,15 @@
 package main
 
 import (
-	"github.com/samuel/go-zookeeper/zk"
+	"bytes"
 	"log"
 	"net"
 	"runtime"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/samuel/go-zookeeper/zk"
 )
 
 type zkBindData struct {
@@ -101,12 +103,23 @@ func (this *zkBindData) bindList(path string, data *[]string) {
 	}
 }
 
+type WatcherState int32
+
+const (
+	WatcherStateNotRunning    = WatcherState(0)
+	WatcherStateWatching      = WatcherState(1)
+	WatcherStateFightForJudge = WatcherState(2)
+	WatcherStateSwitchMaster  = WatcherState(3)
+	WatcherStateClosed        = WatcherState(100)
+)
+
 type Watcher struct {
 	conf     *Config
 	zkConn   *zk.Conn
 	bindData *zkBindData
 	quiting  chan interface{}
 	judgeId  string
+	state    WatcherState
 }
 
 func NewWatcher(conf *Config) *Watcher {
@@ -116,8 +129,28 @@ func NewWatcher(conf *Config) *Watcher {
 		return nil
 	}
 	bind := newZkBindData(conn, conf)
+	judgeId := createJudgeId()
+	log.Println("JudgeId: ", judgeId)
 	quiting := make(chan interface{})
-	return &Watcher{conf: conf, zkConn: conn, bindData: bind, quiting: quiting}
+	return &Watcher{conf: conf, zkConn: conn, bindData: bind, quiting: quiting, judgeId: judgeId, state: WatcherStateNotRunning}
+}
+
+func createJudgeId() string {
+	var buf bytes.Buffer
+	buf.WriteString(strconv.FormatInt(time.Now().Unix(), 10))
+
+	inters, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Println("CanNotCreateJudgeId: ", err)
+		buf.WriteString(",CanNotCallInterfaceAddrs")
+	} else {
+		for _, i := range inters {
+			buf.WriteString(",")
+			buf.WriteString(i.String())
+		}
+	}
+
+	return string(buf.Bytes())
 }
 
 func (this *Watcher) Start() {
@@ -125,7 +158,12 @@ func (this *Watcher) Start() {
 		log.Println("zkConn is null, Can NOT start watcher !")
 		return
 	}
-
+	if this.state != WatcherStateNotRunning {
+		log.Println("It is not under WatcherStateNotRunning state")
+		return
+	}
+	this.state = WatcherStateWatching
+	go this.watchMaster()
 }
 
 func (this *Watcher) watchMaster() {
@@ -137,20 +175,24 @@ func (this *Watcher) watchMaster() {
 			log.Println("Can not convert minFailCount: ", minFailCount)
 			minFailCount = 100
 		}
-		if m == "" {
-			this.fightForJudge()
+		if this.state == WatcherStateWatching && m == "" {
+			this.state = WatcherStateFightForJudge
+			go this.fightForJudge()
 			failCount = 0
 			continue
 		}
 		conn, err := net.DialTimeout("tcp", m, time.Second)
 		if err != nil {
 			failCount++
-			if failCount >= 5 {
-				this.fightForJudge()
+			if this.state == WatcherStateWatching && failCount >= 5 {
+				this.state = WatcherStateFightForJudge
+				go this.fightForJudge()
 				failCount = 0
 				continue
 			}
 		} else {
+			// 如果重新可以连接，那就失败数归0
+			failCount = 0
 			conn.Close()
 		}
 		select {
@@ -163,6 +205,12 @@ func (this *Watcher) watchMaster() {
 }
 
 func (this *Watcher) fightForJudge() {
+	defer func() {
+		if this.state == WatcherStateFightForJudge || this.state == WatcherStateSwitchMaster {
+			this.state = WatcherStateWatching
+		}
+	}()
+
 	minFailCount, cerr := strconv.Atoi(this.bindData.minFailCount)
 	if cerr != nil {
 		log.Println("Can not convert minFailCount: ", minFailCount)
@@ -172,23 +220,23 @@ func (this *Watcher) fightForJudge() {
 		return
 	}
 	path := this.conf.ZkPath.Root + this.conf.ZkPath.Judge
-	_, err := this.zkConn.Create(path, []byte("me"), zk.FlagEphemeral, nil)
+	_, err := this.zkConn.Create(path, []byte(this.judgeId), zk.FlagEphemeral, nil)
 	if err == zk.ErrNodeExists {
 		//已经存在了
 		return
 	}
 	defer this.zkConn.Delete(path, -1)
-	
+
 	mpath := this.conf.ZkPath.Root + this.conf.ZkPath.Master
 	this.zkConn.Set(mpath, []byte(""), 0)
-	
+
 	select {
 	case <-this.quiting:
 		return
 	case <-time.After(2 * time.Second):
 		//
 	}
-	
+
 	master := this.bindData.master
 	for _, srv := range this.bindData.serverList {
 		if srv == master {
@@ -201,17 +249,34 @@ func (this *Watcher) fightForJudge() {
 		} else {
 			conn.Close()
 			log.Println("Judge, Set master ", srv)
-			this.zkConn.Set(mpath, []byte(srv), 0)
+			this.state = WatcherStateSwitchMaster
+			for j := 0; j < 5; j++ {
+				//更新master的值，如果失败就重试
+				_, err := this.zkConn.Set(mpath, []byte(srv), 0)
+				if err != nil {
+					log.Printf("CanNOT set master value in zk [%d]: %s\n", j, err)
+					select {
+					case <-this.quiting:
+						return
+					case <-time.After(2 * time.Second):
+						//
+					}
+					continue
+				}
+				return
+			}
+			log.Println("Can NOT set master with zk")
 			return
 		}
 	}
-	
+
 	log.Println("Judge, Not found valid master")
 }
 
 func (this *Watcher) Shutdown() {
 	if this.zkConn != nil {
 		close(this.quiting)
+		this.state = WatcherStateClosed
 		this.zkConn.Close()
 		this.zkConn = nil
 	}
